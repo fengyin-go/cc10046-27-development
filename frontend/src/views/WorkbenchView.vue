@@ -37,6 +37,8 @@
       <button class="btn ghost" data-testid="reset" type="button" @click="resetFilters">重置条件</button>
     </form>
 
+    <ProxyPoolPanel v-if="meta.key === 'proxy_pool'" @data-changed="reload" />
+
     <table class="data-table">
       <thead>
         <tr>
@@ -103,6 +105,7 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
+import ProxyPoolPanel from '@/domain/ProxyPoolPanel.vue'
 import type { EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()

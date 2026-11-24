@@ -1,6 +1,8 @@
 """错误日志领域服务：记录和查询采集过程中的错误。"""
 from __future__ import annotations
 
+from typing import Any
+
 from app.services.base import BaseModuleService
 
 
@@ -16,8 +18,13 @@ class ErrorLoggerService(BaseModuleService):
 
     def domain_log_error(self, error_code: str, error_message: str,
                          source_module: str, trace_id: str = "",
-                         severity: str = "error") -> dict:
-        """记录采集错误并返回日志条目。"""
+                         severity: str = "error",
+                         extra: dict[str, Any] | None = None) -> dict:
+        """记录采集错误并返回日志条目。
+
+        extra 用于携带链路排障证据（例如无可用节点时的逐节点排除明细），
+        与追踪号一起落库，后续可按追踪号从错误列表筛出。
+        """
         from app.store import store
         import time
         rows = store.rows(self.MODULE)
@@ -36,5 +43,19 @@ class ErrorLoggerService(BaseModuleService):
             "pending": True,
             "abnormal": severity == "error",
         }
+        if extra:
+            for key, value in extra.items():
+                entry[key] = value
         rows.append(entry)
         return entry
+
+    def domain_find_by_trace(self, trace_id: str) -> list[dict[str, Any]]:
+        """按追踪号取回当时的错误记录（含排除明细），恢复后仍可复盘。"""
+        from app.store import store
+        trace = (trace_id or "").strip()
+        if not trace:
+            return []
+        return [
+            dict(row) for row in store.rows(self.MODULE)
+            if str(row.get("追踪号", "")) == trace
+        ]

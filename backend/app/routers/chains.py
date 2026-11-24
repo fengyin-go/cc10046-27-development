@@ -102,26 +102,54 @@ def run_data_process(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/reliability")
 def run_reliability(payload: dict[str, Any]) -> dict[str, Any]:
-    """可靠性保障：代理分配 → 限速检查 → 重试计算 → 错误记录。"""
+    """可靠性保障：冷却判定 → 代理分配 → 限速检查 → 重试计算 → 错误记录。
+
+    代理分配只消费节点冷却判定记录，判定以服务端登记的冷却开始时间和当前
+    节点状态为准；无节点可用时，错误记录关联本次追踪号和逐节点排除明细。
+    """
     site = payload.get("site", "example.com")
     protocol = payload.get("protocol", "http")
+    region = payload.get("region", "")
     request_count = payload.get("request_count", 100)
     error_type = payload.get("error_type", "timeout")
     attempt = payload.get("attempt", 2)
+    trace_id = payload.get("trace_id", "")
+    recovery_mode = payload.get("recovery_mode", "recheck")
+    now_ts = payload.get("now_ts")
 
-    proxy_result = _proxy.domain_allocate_proxy(protocol)
+    proxy_result = _proxy.domain_allocate_proxy(
+        protocol=protocol,
+        region=region,
+        trace_id=trace_id,
+        recovery_mode=recovery_mode,
+        now_ts=now_ts,
+    )
     rate_result = _limiter.domain_check_rate(site, request_count)
     retry_result = _retry.domain_retry_calc(error_type, attempt)
-    log_result = _logger.domain_log_error(
-        "ERR-CHECK", f"可靠性检查 {site}", site)
+
+    # 无节点可用时，分配流程已写入带追踪号和排除明细的错误记录，直接消费；
+    # 分配成功时保留一条常规可靠性检查记录。
+    if proxy_result.get("error_log"):
+        log_entry = proxy_result["error_log"]
+    else:
+        log_entry = _logger.domain_log_error(
+            "ERR-CHECK", f"可靠性检查 {site}", site,
+            trace_id=proxy_result["trace_id"])
+    log_result = {
+        "error_code": log_entry["错误码"],
+        "error_message": log_entry["错误信息"],
+        "追踪号": log_entry["追踪号"],
+        "排除明细": log_entry.get("排除明细", ""),
+    }
 
     return {
         "chain": "reliability",
+        "trace_id": proxy_result["trace_id"],
         "steps": {
             "allocate_proxy": proxy_result,
             "check_rate": rate_result,
             "retry_calc": retry_result,
-            "log_error": {"error_code": log_result["错误码"], "error_message": log_result["错误信息"]},
+            "log_error": log_result,
         },
     }
 
